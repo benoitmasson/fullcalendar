@@ -178,7 +178,7 @@ function enableCursor() {
 
 // Given a total available height to fill, have `els` (essentially child rows) expand to accomodate.
 // By default, all elements that are shorter than the recommended height are expanded uniformly, not considering
-// any other els that are already too tall. if `shouldRedistribute` is on, it considers these tall rows and 
+// any other els that are already too tall. if `shouldRedistribute` is on, it considers these tall rows and
 // reduces the available height.
 function distributeHeight(els, availableHeight, shouldRedistribute) {
 
@@ -3530,6 +3530,31 @@ Grid.mixin({
 	},
 
 
+	// Renders the background events from the given events onto the grid
+	renderBgEvents: function(events) {
+		var segs = this.eventsToSegs(events);
+		var fgSegs = $.grep(this.segs, function(seg) {
+			return !isBgEvent(seg.event);
+		});
+		var bgSegs = [];
+		var i, seg;
+
+		for (i = 0; i < segs.length; i++) {
+			seg = segs[i];
+
+			if (isBgEvent(seg.event)) {
+				bgSegs.push(seg);
+			}
+		}
+
+		// Render each background segment.
+		// The function may return a subset of the segs, segs that were actually rendered.
+		bgSegs = this.renderBgSegs(bgSegs) || bgSegs;
+
+		this.segs = bgSegs.concat(fgSegs);
+	},
+
+
 	// Unrenders all events currently rendered on the grid
 	unrenderEvents: function() {
 		this.triggerSegMouseout(); // trigger an eventMouseout if user's mouse is over an event
@@ -3538,6 +3563,16 @@ Grid.mixin({
 		this.unrenderBgSegs();
 
 		this.segs = null;
+	},
+
+
+	// Unrenders all background events currently rendered on the grid
+	unrenderBgEvents: function() {
+		this.unrenderBgSegs();
+
+		this.segs = $.grep(this.segs, function(seg) {
+			return !isBgEvent(seg.event);
+		});
 	},
 
 
@@ -4413,6 +4448,11 @@ function isBgEvent(event) { // returns true if background OR inverse-background
 }
 
 
+function isBgSource(source) { // returns true if background OR inverse-background
+	return source.rendering === 'background' || source.rendering === 'inverse-background';
+}
+
+
 function isInverseBgEvent(event) {
 	return getEventRendering(event) === 'inverse-background';
 }
@@ -4506,7 +4546,6 @@ function getDraggedElMeta(el) {
 
 	return { eventProps: eventProps, startTime: startTime, duration: duration, stick: stick };
 }
-
 
 ;;
 
@@ -4998,6 +5037,12 @@ DayGrid.mixin({
 	},
 
 
+	// Unrenders all background events currently rendered on the grid
+	unrenderBgEvents: function() {
+		Grid.prototype.unrenderBgEvents.apply(this, arguments); // calls the super-method
+	},
+
+
 	// Retrieves all rendered segment objects currently rendered on the grid
 	getEventSegs: function() {
 		return Grid.prototype.getEventSegs.call(this) // get the segments from the super-method
@@ -5101,7 +5146,7 @@ DayGrid.mixin({
 			'<span class="fc-title">' +
 				(htmlEscape(event.title || '') || '&nbsp;') + // we always want one line of height
 			'</span>';
-		
+
 		return '<a class="' + classes.join(' ') + '"' +
 				(event.url ?
 					' href="' + htmlEscape(event.url) + '"' :
@@ -5230,7 +5275,7 @@ DayGrid.mixin({
 		// Give preference to elements with certain criteria, so they have
 		// a chance to be closer to the top.
 		segs.sort(compareSegs);
-		
+
 		for (i = 0; i < segs.length; i++) {
 			seg = segs[i];
 
@@ -6880,6 +6925,7 @@ var View = fc.View = Class.extend({
 	displaying: null, // a promise representing the state of rendering. null if no render requested
 	isSkeletonRendered: false,
 	isEventsRendered: false,
+	isBgEventsRendered: false,
 
 	// range the view is actually displaying (moments)
 	start: null,
@@ -7387,6 +7433,19 @@ var View = fc.View = Class.extend({
 		this.clearEvents();
 		this.renderEvents(events);
 		this.isEventsRendered = true;
+		this.isBgEventsRendered = true;
+		this.setScroll(scrollState);
+		this.triggerEventRender();
+	},
+
+
+	// Does everything necessary to display the given background events onto the current view
+	displayBgEvents: function(events) {
+		var scrollState = this.queryScroll();
+
+		this.clearBgEvents();
+		this.renderBgEvents(events);
+		this.isBgEventsRendered = true;
 		this.setScroll(scrollState);
 		this.triggerEventRender();
 	},
@@ -7405,14 +7464,35 @@ var View = fc.View = Class.extend({
 	},
 
 
+	// Does everything necessary to clear the view's currently-rendered background events
+	clearBgEvents: function() {
+		if (this.isBgEventsRendered) {
+			this.unrenderBgEvents();
+			this.isBgEventsRendered = false;
+		}
+	},
+
+
 	// Renders the events onto the view.
 	renderEvents: function(events) {
 		// subclasses should implement
 	},
 
 
+	// Renders the background events from the given events onto the view.
+	renderBgEvents: function(events) {
+		// subclasses should implement
+	},
+
+
 	// Removes event elements from the view.
 	unrenderEvents: function() {
+		// subclasses should implement
+	},
+
+
+	// Removes background event elements from the view.
+	unrenderBgEvents: function() {
 		// subclasses should implement
 	},
 
@@ -8075,7 +8155,9 @@ function Calendar_constructor(element, overrides) {
 	t.render = render;
 	t.destroy = destroy;
 	t.refetchEvents = refetchEvents;
+	t.refetchBgEvents = refetchBgEvents;
 	t.reportEvents = reportEvents;
+	t.reportBgEvents = reportBgEvents;
 	t.reportEventChange = reportEventChange;
 	t.rerenderEvents = renderEvents; // `renderEvents` serves as a rerender. an API method
 	t.changeView = renderView; // `renderView` will switch to another view
@@ -8268,6 +8350,7 @@ function Calendar_constructor(element, overrides) {
 	EventManager.call(t, options);
 	var isFetchNeeded = t.isFetchNeeded;
 	var fetchEvents = t.fetchEvents;
+	var fetchBgEvents = t.fetchBgEvents;
 
 
 
@@ -8512,6 +8595,12 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function refetchBgEvents() { // can be called as an API method
+		destroyBgEvents(); // so that events are cleared before user starts waiting for AJAX
+		fetchAndRenderBgEvents();
+	}
+
+
 	function renderEvents() { // destroys old events if previously rendered
 		if (elementVisible()) {
 			freezeContentHeight();
@@ -8521,9 +8610,28 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function renderBgEvents() { // destroys old background events if previously rendered
+		if (elementVisible()) {
+			var bgEvents = $.grep(events, function(event) {
+				return isBgEvent(event);
+			});
+			freezeContentHeight();
+			currentView.displayBgEvents(bgEvents);
+			unfreezeContentHeight();
+		}
+	}
+
+
 	function destroyEvents() {
 		freezeContentHeight();
 		currentView.clearEvents();
+		unfreezeContentHeight();
+	}
+
+
+	function destroyBgEvents() {
+		freezeContentHeight();
+		currentView.clearBgEvents();
 		unfreezeContentHeight();
 	}
 
@@ -8545,10 +8653,24 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function fetchAndRenderBgEvents() {
+		fetchBgEvents(currentView.start, currentView.end);
+			// ... will call reportEvents
+			// ... which will call renderEvents
+	}
+
+
 	// called when event data arrives
 	function reportEvents(_events) {
 		events = _events;
 		renderEvents();
+	}
+
+
+	// called when background event data arrives
+	function reportBgEvents(_events) {
+		events = _events;
+		renderBgEvents();
 	}
 
 
@@ -9293,6 +9415,7 @@ function EventManager(options) { // assumed to be a calendar
 	// exports
 	t.isFetchNeeded = isFetchNeeded;
 	t.fetchEvents = fetchEvents;
+	t.fetchBgEvents = fetchBgEvents;
 	t.addEventSource = addEventSource;
 	t.removeEventSource = removeEventSource;
 	t.updateEvent = updateEvent;
@@ -9307,6 +9430,7 @@ function EventManager(options) { // assumed to be a calendar
 
 	// imports
 	var reportEvents = t.reportEvents;
+	var reportBgEvents = t.reportBgEvents;
 
 
 	// locals
@@ -9315,6 +9439,7 @@ function EventManager(options) { // assumed to be a calendar
 	var rangeStart, rangeEnd;
 	var currentFetchID = 0;
 	var pendingSourceCnt = 0;
+	var pendingBgSourceCnt = 0;
 	var cache = []; // holds events that have already been expanded
 
 
@@ -9349,8 +9474,31 @@ function EventManager(options) { // assumed to be a calendar
 		var fetchID = ++currentFetchID;
 		var len = sources.length;
 		pendingSourceCnt = len;
+		pendingBgSourceCnt = $.grep(sources, function(source) {
+			return isBgSource(source);
+		}).length;
 		for (var i=0; i<len; i++) {
 			fetchEventSource(sources[i], fetchID);
+		}
+	}
+
+
+	function fetchBgEvents(start, end) {
+		rangeStart = start;
+		rangeEnd = end;
+		cache = $.grep(cache, function(event) {
+			return !isBgEvent(event);
+		});
+		var fetchID = ++currentFetchID;
+		var len = sources.length;
+		pendingBgSourceCnt = $.grep(sources, function(source) {
+			return isBgSource(source);
+		}).length;
+		for (var i=0; i<len; i++) {
+			var source = sources[i];
+			if (isBgSource(source)) {
+				fetchBgEventSource(sources[i], fetchID);
+			}
 		}
 	}
 
@@ -9386,6 +9534,45 @@ function EventManager(options) { // assumed to be a calendar
 				pendingSourceCnt--;
 				if (!pendingSourceCnt) {
 					reportEvents(cache);
+				}
+			}
+		});
+	}
+
+
+	function fetchBgEventSource(source, fetchID) {
+		_fetchEventSource(source, function(eventInputs) {
+			var isArraySource = $.isArray(source.events);
+			var i, eventInput;
+			var abstractEvent;
+			var bgCache = [];
+
+			if (fetchID == currentFetchID) {
+
+				if (eventInputs) {
+					for (i = 0; i < eventInputs.length; i++) {
+						eventInput = eventInputs[i];
+
+						if (isArraySource) { // array sources have already been convert to Event Objects
+							abstractEvent = eventInput;
+						}
+						else {
+							abstractEvent = buildEventFromInput(eventInput, source);
+						}
+
+						if (abstractEvent) { // not false (an invalid event)
+							bgCache.push.apply(
+								bgCache,
+								expandEvent(abstractEvent) // add individual expanded events to the cache
+							);
+						}
+					}
+				}
+
+				pendingBgSourceCnt--;
+				if (!pendingBgSourceCnt) {
+					cache = cache.concat(bgCache);
+					reportBgEvents(bgCache);
 				}
 			}
 		});
@@ -9512,6 +9699,9 @@ function EventManager(options) { // assumed to be a calendar
 		if (source) {
 			sources.push(source);
 			pendingSourceCnt++;
+			if (isBgSource(source)) {
+				pendingBgSourceCnt++;
+			}
 			fetchEventSource(source, currentFetchID); // will eventually call reportEvents
 		}
 	}
@@ -9587,7 +9777,6 @@ function EventManager(options) { // assumed to be a calendar
 		) ||
 		source; // the given argument *is* the primitive
 	}
-
 
 
 	/* Manipulation
@@ -10885,6 +11074,14 @@ var BasicView = View.extend({
 	},
 
 
+	// Renders the background events from the given events onto the view and populates the segments array
+	renderBgEvents: function(events) {
+		this.dayGrid.renderBgEvents(events);
+
+		this.updateHeight(); // must compensate for events that overflow the row
+	},
+
+
 	// Retrieves all segment objects that are rendered in the view
 	getEventSegs: function() {
 		return this.dayGrid.getEventSegs();
@@ -10894,6 +11091,16 @@ var BasicView = View.extend({
 	// Unrenders all event elements and clears internal segment data
 	unrenderEvents: function() {
 		this.dayGrid.unrenderEvents();
+
+		// we DON'T need to call updateHeight() because:
+		// A) a renderEvents() call always happens after this, which will eventually call updateHeight()
+		// B) in IE8, this causes a flash whenever events are rerendered
+	},
+
+
+	// Unrenders all background event elements and clears internal segment data
+	unrenderBgEvents: function() {
+		this.dayGrid.unrenderBgEvents();
 
 		// we DON'T need to call updateHeight() because:
 		// A) a renderEvents() call always happens after this, which will eventually call updateHeight()
@@ -11313,6 +11520,35 @@ var AgendaView = View.extend({
 	},
 
 
+	// Renders the background events from the given events onto the view and populates the View's segment array
+	renderBgEvents: function(events) {
+		var dayEvents = [];
+		var timedEvents = [];
+		var daySegs = [];
+		var timedSegs;
+		var i;
+
+		// separate the events into all-day and timed
+		for (i = 0; i < events.length; i++) {
+			if (events[i].allDay) {
+				dayEvents.push(events[i]);
+			}
+			else {
+				timedEvents.push(events[i]);
+			}
+		}
+
+		// render the events in the subcomponents
+		timedSegs = this.timeGrid.renderBgEvents(timedEvents);
+		if (this.dayGrid) {
+			daySegs = this.dayGrid.renderBgEvents(dayEvents);
+		}
+
+		// the all-day area is flexible and might have a lot of events, so shift the height
+		this.updateHeight();
+	},
+
+
 	// Retrieves all segment objects that are rendered in the view
 	getEventSegs: function() {
 		return this.timeGrid.getEventSegs().concat(
@@ -11328,6 +11564,21 @@ var AgendaView = View.extend({
 		this.timeGrid.unrenderEvents();
 		if (this.dayGrid) {
 			this.dayGrid.unrenderEvents();
+		}
+
+		// we DON'T need to call updateHeight() because:
+		// A) a renderEvents() call always happens after this, which will eventually call updateHeight()
+		// B) in IE8, this causes a flash whenever events are rerendered
+	},
+
+
+	// Unrenders all background event elements and clears internal segment data
+	unrenderBgEvents: function() {
+
+		// unrender the events in the subcomponents
+		this.timeGrid.unrenderBgEvents();
+		if (this.dayGrid) {
+			this.dayGrid.unrenderBgEvents();
 		}
 
 		// we DON'T need to call updateHeight() because:

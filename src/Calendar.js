@@ -266,7 +266,9 @@ function Calendar_constructor(element, overrides) {
 	t.render = render;
 	t.destroy = destroy;
 	t.refetchEvents = refetchEvents;
+	t.refetchBgEvents = refetchBgEvents;
 	t.reportEvents = reportEvents;
+	t.reportBgEvents = reportBgEvents;
 	t.reportEventChange = reportEventChange;
 	t.rerenderEvents = renderEvents; // `renderEvents` serves as a rerender. an API method
 	t.changeView = renderView; // `renderView` will switch to another view
@@ -459,6 +461,7 @@ function Calendar_constructor(element, overrides) {
 	EventManager.call(t, options);
 	var isFetchNeeded = t.isFetchNeeded;
 	var fetchEvents = t.fetchEvents;
+	var fetchBgEvents = t.fetchBgEvents;
 
 
 
@@ -703,6 +706,12 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function refetchBgEvents() { // can be called as an API method
+		destroyBgEvents(); // so that events are cleared before user starts waiting for AJAX
+		fetchAndRenderBgEvents();
+	}
+
+
 	function renderEvents() { // destroys old events if previously rendered
 		if (elementVisible()) {
 			freezeContentHeight();
@@ -712,9 +721,28 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function renderBgEvents() { // destroys old background events if previously rendered
+		if (elementVisible()) {
+			var bgEvents = $.grep(events, function(event) {
+				return isBgEvent(event);
+			});
+			freezeContentHeight();
+			currentView.displayBgEvents(bgEvents);
+			unfreezeContentHeight();
+		}
+	}
+
+
 	function destroyEvents() {
 		freezeContentHeight();
 		currentView.clearEvents();
+		unfreezeContentHeight();
+	}
+
+
+	function destroyBgEvents() {
+		freezeContentHeight();
+		currentView.clearBgEvents();
 		unfreezeContentHeight();
 	}
 
@@ -736,10 +764,24 @@ function Calendar_constructor(element, overrides) {
 	}
 
 
+	function fetchAndRenderBgEvents() {
+		fetchBgEvents(currentView.start, currentView.end);
+			// ... will call reportEvents
+			// ... which will call renderEvents
+	}
+
+
 	// called when event data arrives
 	function reportEvents(_events) {
 		events = _events;
 		renderEvents();
+	}
+
+
+	// called when background event data arrives
+	function reportBgEvents(_events) {
+		events = _events;
+		renderBgEvents();
 	}
 
 

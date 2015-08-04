@@ -17,6 +17,7 @@ function EventManager(options) { // assumed to be a calendar
 	// exports
 	t.isFetchNeeded = isFetchNeeded;
 	t.fetchEvents = fetchEvents;
+	t.fetchBgEvents = fetchBgEvents;
 	t.addEventSource = addEventSource;
 	t.removeEventSource = removeEventSource;
 	t.updateEvent = updateEvent;
@@ -31,6 +32,7 @@ function EventManager(options) { // assumed to be a calendar
 
 	// imports
 	var reportEvents = t.reportEvents;
+	var reportBgEvents = t.reportBgEvents;
 
 
 	// locals
@@ -39,6 +41,7 @@ function EventManager(options) { // assumed to be a calendar
 	var rangeStart, rangeEnd;
 	var currentFetchID = 0;
 	var pendingSourceCnt = 0;
+	var pendingBgSourceCnt = 0;
 	var cache = []; // holds events that have already been expanded
 
 
@@ -73,8 +76,31 @@ function EventManager(options) { // assumed to be a calendar
 		var fetchID = ++currentFetchID;
 		var len = sources.length;
 		pendingSourceCnt = len;
+		pendingBgSourceCnt = $.grep(sources, function(source) {
+			return isBgSource(source);
+		}).length;
 		for (var i=0; i<len; i++) {
 			fetchEventSource(sources[i], fetchID);
+		}
+	}
+
+
+	function fetchBgEvents(start, end) {
+		rangeStart = start;
+		rangeEnd = end;
+		cache = $.grep(cache, function(event) {
+			return !isBgEvent(event);
+		});
+		var fetchID = ++currentFetchID;
+		var len = sources.length;
+		pendingBgSourceCnt = $.grep(sources, function(source) {
+			return isBgSource(source);
+		}).length;
+		for (var i=0; i<len; i++) {
+			var source = sources[i];
+			if (isBgSource(source)) {
+				fetchBgEventSource(sources[i], fetchID);
+			}
 		}
 	}
 
@@ -110,6 +136,45 @@ function EventManager(options) { // assumed to be a calendar
 				pendingSourceCnt--;
 				if (!pendingSourceCnt) {
 					reportEvents(cache);
+				}
+			}
+		});
+	}
+
+
+	function fetchBgEventSource(source, fetchID) {
+		_fetchEventSource(source, function(eventInputs) {
+			var isArraySource = $.isArray(source.events);
+			var i, eventInput;
+			var abstractEvent;
+			var bgCache = [];
+
+			if (fetchID == currentFetchID) {
+
+				if (eventInputs) {
+					for (i = 0; i < eventInputs.length; i++) {
+						eventInput = eventInputs[i];
+
+						if (isArraySource) { // array sources have already been convert to Event Objects
+							abstractEvent = eventInput;
+						}
+						else {
+							abstractEvent = buildEventFromInput(eventInput, source);
+						}
+
+						if (abstractEvent) { // not false (an invalid event)
+							bgCache.push.apply(
+								bgCache,
+								expandEvent(abstractEvent) // add individual expanded events to the cache
+							);
+						}
+					}
+				}
+
+				pendingBgSourceCnt--;
+				if (!pendingBgSourceCnt) {
+					cache = cache.concat(bgCache);
+					reportBgEvents(bgCache);
 				}
 			}
 		});
@@ -236,6 +301,9 @@ function EventManager(options) { // assumed to be a calendar
 		if (source) {
 			sources.push(source);
 			pendingSourceCnt++;
+			if (isBgSource(source)) {
+				pendingBgSourceCnt++;
+			}
 			fetchEventSource(source, currentFetchID); // will eventually call reportEvents
 		}
 	}
@@ -311,7 +379,6 @@ function EventManager(options) { // assumed to be a calendar
 		) ||
 		source; // the given argument *is* the primitive
 	}
-
 
 
 	/* Manipulation

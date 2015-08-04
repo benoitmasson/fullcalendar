@@ -14,6 +14,12 @@ DayGrid.mixin({
 	},
 
 
+	// Unrenders all background events currently rendered on the grid
+	unrenderBgEvents: function() {
+		Grid.prototype.unrenderBgEvents.apply(this, arguments); // calls the super-method
+	},
+
+
 	// Retrieves all rendered segment objects currently rendered on the grid
 	getEventSegs: function() {
 		return Grid.prototype.getEventSegs.call(this) // get the segments from the super-method
@@ -117,7 +123,7 @@ DayGrid.mixin({
 			'<span class="fc-title">' +
 				(htmlEscape(event.title || '') || '&nbsp;') + // we always want one line of height
 			'</span>';
-		
+
 		return '<a class="' + classes.join(' ') + '"' +
 				(event.url ?
 					' href="' + htmlEscape(event.url) + '"' :
@@ -246,7 +252,7 @@ DayGrid.mixin({
 		// Give preference to elements with certain criteria, so they have
 		// a chance to be closer to the top.
 		segs.sort(compareSegs);
-		
+
 		for (i = 0; i < segs.length; i++) {
 			seg = segs[i];
 
